@@ -1,0 +1,20 @@
+{
+  "name": "clau-guitar｜アコギ楽譜マネージャー",
+  "short_name": "clau-guitar",
+  "description": "アコースティックギターの楽譜を管理し、オリジナルのコード譜・TAB譜を作成できる個人用アプリ",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f6f3ec",
+  "theme_color": "#1f6f5c",
+  "lang": "ja",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
