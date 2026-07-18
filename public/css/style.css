@@ -129,6 +129,24 @@ input, textarea, button { font-family: inherit; font-size: 1rem; }
 #f-body.mono, .mono { font-family: "SF Mono", "Consolas", ui-monospace, monospace; font-size: .9rem; }
 .preview { padding: 14px; min-height: 420px; overflow-x: auto; }
 
+/* ---- 書き起こしモード（元楽譜を見ながら入力） ---- */
+.trace { display: grid; grid-template-columns: minmax(0, 46%) 1fr; gap: 14px; align-items: start; }
+.trace-ref { position: sticky; top: 62px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); max-height: calc(100vh - 80px); display: flex; flex-direction: column; }
+.trace-ref .pane-head { display: flex; justify-content: space-between; align-items: center; }
+.ref-open { font-size: .8rem; color: var(--brand); font-weight: 700; }
+.trace-ref-body { overflow: auto; flex: 1; background: var(--panel-2); }
+.trace-ref-body .doc-img { width: 100%; display: block; }
+.trace-ref-body .pdf-frame { width: 100%; height: calc(100vh - 120px); border: 0; display: block; }
+.trace-main .editor-split { grid-template-columns: 1fr; }
+.trace-main #f-body { min-height: 260px; }
+.trace-main .preview { min-height: 200px; }
+@media (max-width: 900px) {
+  .trace { grid-template-columns: 1fr; }
+  .trace-ref { position: static; max-height: none; }
+  .trace-ref-body .doc-img { max-height: 50vh; width: auto; max-width: 100%; margin: 0 auto; }
+  .trace-ref-body .pdf-frame { height: 55vh; }
+}
+
 /* ---- ヘルプ ---- */
 .help { margin-top: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 4px 16px; }
 .help summary { cursor: pointer; font-weight: 700; padding: 10px 0; color: var(--brand); }

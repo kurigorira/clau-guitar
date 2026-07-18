@@ -276,7 +276,13 @@ function renderTabView(s) {
 }
 
 // ---------------- スコア編集 / 新規 ----------------
-route('/scores/new', async (_args, params) => editor(null, params.get('type') || 'chord'));
+route('/scores/new', async (_args, params) => {
+  const type = params.get('type') || 'chord';
+  const refId = params.get('ref');
+  let ref = null;
+  if (refId) { try { ref = await api.getDocument(refId); } catch { /* 元ファイルが無ければ通常編集に */ } }
+  editor(null, type, ref);
+});
 route('/scores/:id/edit', async ({ id }) => { const s = await api.getScore(id); editor(s, s.type); });
 
 const CHORD_SAMPLE = `{title: 練習用サンプル}
@@ -304,14 +310,68 @@ E|-----------------|
 # 数字=押さえるフレット、-=何もしない。
 # 上から 1弦(e)→6弦(E)。小節は | で区切ります。`;
 
-function editor(existing, type) {
+// 書き起こしモードの初期テンプレ（元楽譜の情報だけ埋め、中身は空欄からスタート）
+function traceStarter(ref) {
+  return `{title: ${ref.title || ''}}
+{artist: ${ref.artist || ''}}
+{key: ${ref.key || ''}}
+{capo: ${ref.capo || 0}}
+
+# 左の元楽譜を見ながら、下に書き起こしていきます。
+# 使い方: [G]歌詞  … コードは角カッコ、そのうしろに歌詞
+#         {c: サビ} … セクション見出し
+# 下のサンプル行を消して入力してください。
+
+{c: Aメロ}
+[G]ここに歌詞[D]
+`;
+}
+
+function editor(existing, type, ref = null) {
   const isTab = type === 'tab';
-  const s = existing || { type, title: '', artist: '', key: '', capo: 0, tuning: 'EADGBE', bpm: '', tags: [], body: isTab ? TAB_SAMPLE : CHORD_SAMPLE };
+  const trace = !!ref && !existing;
+  const startBody = isTab ? TAB_SAMPLE : (trace ? traceStarter(ref) : CHORD_SAMPLE);
+  const s = existing || {
+    type,
+    title: trace ? (ref.title || '') : '',
+    artist: trace ? (ref.artist || '') : '',
+    key: trace ? (ref.key || '') : '',
+    capo: trace ? (ref.capo || 0) : 0,
+    tuning: trace ? (ref.tuning || 'EADGBE') : 'EADGBE',
+    bpm: '',
+    tags: trace ? [...(ref.tags || []), '書き起こし'] : [],
+    body: startBody,
+  };
+
+  const splitInner = `
+    <div class="editor-split">
+      <div class="editor-pane">
+        <div class="pane-head">入力 ${isTab ? '（TAB譜）' : '（ChordPro形式）'}</div>
+        <textarea id="f-body" class="${isTab ? 'mono' : ''}" spellcheck="false">${esc(s.body)}</textarea>
+      </div>
+      <div class="editor-pane">
+        <div class="pane-head">プレビュー</div>
+        <div id="preview" class="preview"></div>
+      </div>
+    </div>`;
+
+  const refPane = trace ? `
+    <div class="trace-ref">
+      <div class="pane-head">元の楽譜 ${ref.source ? `（${esc(ref.source)}）` : ''}
+        <a class="ref-open" href="${api.documentFileUrl(ref.id)}" target="_blank" rel="noopener">拡大</a></div>
+      <div class="trace-ref-body">
+        ${ref.fileType === 'pdf'
+          ? `<iframe class="pdf-frame" src="${api.documentFileUrl(ref.id)}#view=FitH" title="元の楽譜"></iframe>`
+          : `<img class="doc-img" src="${api.documentFileUrl(ref.id)}" alt="元の楽譜">`}
+      </div>
+    </div>` : '';
+
   const view = el(`
     <div>
       <div class="page-head">
-        <div><a class="back" href="${existing ? `#/scores/${s.id}` : '#/'}">← 戻る</a>
-          <h1>${existing ? '編集' : (isTab ? '新規 TAB譜' : '新規 コード譜')}</h1></div>
+        <div><a class="back" href="${existing ? `#/scores/${s.id}` : (trace ? `#/documents/${ref.id}` : '#/')}">← 戻る</a>
+          <h1>${existing ? '編集' : (isTab ? '新規 TAB譜' : (trace ? '書き起こし（コード譜）' : '新規 コード譜'))}</h1>
+          ${trace ? '<div class="sub">左の元楽譜を見ながら入力してください。コードは <code>[G]</code> のように書きます</div>' : ''}</div>
         <div class="head-actions">
           <button class="btn primary" id="save">保存</button>
         </div>
@@ -326,16 +386,7 @@ function editor(existing, type) {
           <label>テンポ(BPM)<input id="f-bpm" value="${esc(s.bpm)}" placeholder="120"></label>
           <label class="wide">タグ（カンマ区切り）<input id="f-tags" value="${esc((s.tags || []).join(', '))}" placeholder="練習中, ソロギター"></label>
         </div>
-        <div class="editor-split">
-          <div class="editor-pane">
-            <div class="pane-head">入力 ${isTab ? '（TAB譜）' : '（ChordPro形式）'}</div>
-            <textarea id="f-body" class="${isTab ? 'mono' : ''}" spellcheck="false">${esc(s.body)}</textarea>
-          </div>
-          <div class="editor-pane">
-            <div class="pane-head">プレビュー</div>
-            <div id="preview" class="preview"></div>
-          </div>
-        </div>
+        ${trace ? `<div class="trace">${refPane}<div class="trace-main">${splitInner}</div></div>` : splitInner}
         ${isTab ? tabHelp() : chordHelp()}
       </div>
     </div>
@@ -406,6 +457,7 @@ route('/documents/:id', async ({ id }) => {
         <div><a class="back" href="#/">← ライブラリ</a><h1>${esc(d.title)}</h1>
           <div class="sub">${esc(d.artist || '')} ${metaLine(d)} ${d.source ? `<span class="metaline">出典: ${esc(d.source)}</span>` : ''}</div></div>
         <div class="head-actions">
+          <button class="btn primary" id="trace">✎ コード譜に書き起こす</button>
           <button class="btn" id="rec">＋ 練習を記録</button>
           <a class="btn" href="${fileUrl}" target="_blank" rel="noopener">別タブで開く</a>
           <button class="btn" id="edit">情報を編集</button>
@@ -420,6 +472,7 @@ route('/documents/:id', async ({ id }) => {
       </div>
     </div>
   `);
+  view.querySelector('#trace').onclick = () => navigate(`/scores/new?type=chord&ref=${d.id}`);
   view.querySelector('#rec').onclick = () => openPracticeDialog({ kind: 'document', id: d.id, title: d.title, artist: d.artist });
   view.querySelector('#edit').onclick = () => navigate(`/documents/${id}/edit`);
   view.querySelector('#del').onclick = async () => {
