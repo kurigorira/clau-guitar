@@ -1,6 +1,7 @@
 import { api } from './api.js';
 import { parseChordPro, renderChordPro } from './chordpro.js';
 import { chordDiagram, CHORD_LIBRARY } from './chords.js';
+import { transposeChord, transposeKey, shiftLabel } from './transpose.js';
 
 const app = document.getElementById('app');
 const el = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
@@ -145,20 +146,35 @@ route('/scores/:id', async ({ id }) => {
     <div>
       <div class="page-head">
         <div><a class="back" href="#/">← ライブラリ</a><h1>${esc(s.title)}</h1>
-          <div class="sub">${esc(s.artist || '')} ${metaLine(s)}</div></div>
+          <div class="sub">${esc(s.artist || '')} <span id="metaline">${metaLine(s)}</span></div></div>
         <div class="head-actions">
+          <button class="btn" id="rec">＋ 練習を記録</button>
           <button class="btn" id="edit">編集</button>
           <button class="btn" id="print">🖨 印刷</button>
           <button class="btn danger" id="del">削除</button>
         </div>
       </div>
+      <div id="controls"></div>
       <div id="body"></div>
     </div>
   `);
   const body = view.querySelector('#body');
-  if (s.type === 'tab') body.appendChild(renderTabView(s));
-  else body.appendChild(renderChordView(s));
+  const controls = view.querySelector('#controls');
 
+  if (s.type === 'tab') {
+    body.appendChild(renderTabView(s));
+  } else {
+    // 移調・カポ換算の状態（表示のみ、保存はしない）
+    const state = { shift: 0, capo: Number(s.capo) || 0 };
+    const rerender = () => {
+      body.replaceChildren(renderChordView(s, state));
+      view.querySelector('#metaline').innerHTML = metaLine(s, state);
+    };
+    controls.appendChild(chordControls(state, rerender));
+    rerender();
+  }
+
+  view.querySelector('#rec').onclick = () => openPracticeDialog({ kind: 'score', id: s.id, title: s.title, artist: s.artist });
   view.querySelector('#edit').onclick = () => navigate(`/scores/${id}/edit`);
   view.querySelector('#print').onclick = () => window.print();
   view.querySelector('#del').onclick = async () => {
@@ -168,25 +184,88 @@ route('/scores/:id', async ({ id }) => {
   app.replaceChildren(view);
 });
 
-function metaLine(s) {
+// 移調(±半音) と カポ の操作バー
+function chordControls(state, rerender) {
+  const bar = el(`
+    <div class="ctrl-bar">
+      <div class="ctrl-group">
+        <span class="ctrl-label">移調</span>
+        <button class="ctrl-btn" id="down">♭ −1</button>
+        <span class="ctrl-val" id="shiftval">±0</span>
+        <button class="ctrl-btn" id="up">♯ +1</button>
+        <button class="ctrl-btn ghost" id="reset">リセット</button>
+      </div>
+      <div class="ctrl-group">
+        <span class="ctrl-label">カポ</span>
+        <select id="capo" class="ctrl-select"></select>
+      </div>
+      <div class="ctrl-note" id="note"></div>
+    </div>
+  `);
+  const capoSel = bar.querySelector('#capo');
+  for (let i = 0; i <= 9; i++) capoSel.insertAdjacentHTML('beforeend', `<option value="${i}" ${i === state.capo ? 'selected' : ''}>${i === 0 ? 'なし' : i + 'フレット'}</option>`);
+  const refresh = () => {
+    bar.querySelector('#shiftval').textContent = shiftLabel(state.shift);
+    const note = bar.querySelector('#note');
+    if (state.capo > 0) {
+      note.innerHTML = '上のコード＝実際に鳴る音／<b>下の図＝カポを付けて押さえる形</b>';
+      note.hidden = false;
+    } else { note.hidden = true; }
+  };
+  bar.querySelector('#down').onclick = () => { state.shift--; rerender(); refresh(); };
+  bar.querySelector('#up').onclick = () => { state.shift++; rerender(); refresh(); };
+  bar.querySelector('#reset').onclick = () => { state.shift = 0; rerender(); refresh(); };
+  capoSel.onchange = () => { state.capo = Number(capoSel.value); rerender(); refresh(); };
+  refresh();
+  return bar;
+}
+
+function metaLine(s, state = {}) {
+  const shift = state.shift || 0;
   const parts = [];
-  if (s.key) parts.push(`Key: ${s.key}`);
-  if (s.capo) parts.push(`Capo: ${s.capo}`);
+  if (s.key) {
+    const shownKey = shift ? transposeKey(s.key, shift) : s.key;
+    parts.push(shift ? `Key: ${shownKey}（原曲 ${s.key} ${shiftLabel(shift)}）` : `Key: ${s.key}`);
+  } else if (shift) {
+    parts.push(`移調 ${shiftLabel(shift)}`);
+  }
+  const capo = state.capo !== undefined ? state.capo : s.capo;
+  if (capo) parts.push(`Capo: ${capo}`);
   if (s.tuning && s.tuning !== 'EADGBE') parts.push(`Tuning: ${s.tuning}`);
   if (s.bpm) parts.push(`♩=${s.bpm}`);
   return parts.length ? `<span class="metaline">${esc(parts.join(' / '))}</span>` : '';
 }
 
-function renderChordView(s) {
+// state = { shift: 表示の移調(半音), capo: カポ位置 }
+// 歌詞の上のコード = 実際に鳴る音（原曲 + shift）
+// ダイアグラム = 押さえる形（鳴る音 − capo）
+function renderChordView(s, state = {}) {
+  const shift = state.shift || 0;
+  const capo = state.capo || 0;
   const parsed = parseChordPro(s.body);
   const wrap = el('<div class="score-sheet"></div>');
+
+  // ダイアグラム（押さえる形）
+  const shapeShift = shift - capo;
   const chords = parsed.usedChords;
   if (chords.length) {
     const panel = el('<div class="diagram-panel"></div>');
-    for (const name of chords) panel.insertAdjacentHTML('beforeend', `<div class="diagram">${chordDiagram(name, parsed.customDefs)}</div>`);
+    for (const name of chords) {
+      const shape = transposeChord(name, shapeShift);
+      // カポ0・移調0のときだけ独自定義を使える（移調後は名前が変わり辞書対象外）
+      const defs = shapeShift === 0 ? parsed.customDefs : {};
+      panel.insertAdjacentHTML('beforeend', `<div class="diagram">${chordDiagram(shape, defs)}</div>`);
+    }
     wrap.appendChild(panel);
   }
-  wrap.insertAdjacentHTML('beforeend', `<div class="chord-sheet">${renderChordPro(parsed)}</div>`);
+
+  // 歌詞上のコード（鳴る音）を移調して描画
+  const shown = shift
+    ? { ...parsed, blocks: parsed.blocks.map((b) => (b.type === 'line'
+      ? { ...b, segs: b.segs.map((seg) => ({ chord: seg.chord ? transposeChord(seg.chord, shift) : seg.chord, text: seg.text })) }
+      : b)) }
+    : parsed;
+  wrap.insertAdjacentHTML('beforeend', `<div class="chord-sheet">${renderChordPro(shown)}</div>`);
   return wrap;
 }
 
@@ -327,6 +406,7 @@ route('/documents/:id', async ({ id }) => {
         <div><a class="back" href="#/">← ライブラリ</a><h1>${esc(d.title)}</h1>
           <div class="sub">${esc(d.artist || '')} ${metaLine(d)} ${d.source ? `<span class="metaline">出典: ${esc(d.source)}</span>` : ''}</div></div>
         <div class="head-actions">
+          <button class="btn" id="rec">＋ 練習を記録</button>
           <a class="btn" href="${fileUrl}" target="_blank" rel="noopener">別タブで開く</a>
           <button class="btn" id="edit">情報を編集</button>
           <button class="btn danger" id="del">削除</button>
@@ -340,6 +420,7 @@ route('/documents/:id', async ({ id }) => {
       </div>
     </div>
   `);
+  view.querySelector('#rec').onclick = () => openPracticeDialog({ kind: 'document', id: d.id, title: d.title, artist: d.artist });
   view.querySelector('#edit').onclick = () => navigate(`/documents/${id}/edit`);
   view.querySelector('#del').onclick = async () => {
     if (!confirm('この楽譜（アップロードファイル）を削除しますか？')) return;
@@ -465,6 +546,258 @@ route('/chords', async () => {
   for (const name of Object.keys(CHORD_LIBRARY)) {
     all.insertAdjacentHTML('beforeend', `<div class="diagram">${chordDiagram(name)}</div>`);
   }
+  app.replaceChildren(view);
+});
+
+// ---------------- ライブラリ選択肢（ピッカー用） ----------------
+async function loadLibraryItems() {
+  const [scores, docs] = await Promise.all([api.listScores(), api.listDocuments()]);
+  return [
+    ...scores.map((s) => ({ kind: 'score', id: s.id, title: s.title, artist: s.artist })),
+    ...docs.map((d) => ({ kind: 'document', id: d.id, title: d.title, artist: d.artist })),
+  ];
+}
+function libraryOptions(items, selected = '') {
+  return ['<option value="">（曲を選択 / 任意）</option>']
+    .concat(items.map((i) => {
+      const val = `${i.kind}:${i.id}`;
+      const label = `${i.title}${i.artist ? ' / ' + i.artist : ''}`;
+      return `<option value="${esc(val)}" ${val === selected ? 'selected' : ''}>${esc(label)}</option>`;
+    })).join('');
+}
+
+// ---------------- モーダル ----------------
+function modal(innerHtml) {
+  const overlay = el(`<div class="modal-overlay"><div class="modal">${innerHtml}</div></div>`);
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  document.addEventListener('keydown', function onEsc(ev) { if (ev.key === 'Escape') { close(); document.removeEventListener('keydown', onEsc); } });
+  document.body.appendChild(overlay);
+  return { overlay, close };
+}
+
+function starWidget(initial = 0) {
+  const wrap = el('<div class="stars" data-val="' + initial + '"></div>');
+  const paint = (v) => wrap.querySelectorAll('button').forEach((b, i) => b.classList.toggle('on', i < v));
+  for (let i = 1; i <= 5; i++) {
+    const b = el(`<button type="button" aria-label="${i}">★</button>`);
+    b.onclick = () => { wrap.dataset.val = String(i === Number(wrap.dataset.val) ? 0 : i); paint(Number(wrap.dataset.val)); };
+    wrap.appendChild(b);
+  }
+  paint(initial);
+  return wrap;
+}
+
+// 練習記録ダイアログ。item省略時は曲を選べるようにする。
+async function openPracticeDialog(item = null) {
+  const today = new Date().toISOString().slice(0, 10);
+  let items = [];
+  if (!item) { try { items = await loadLibraryItems(); } catch { /* noop */ } }
+  const { overlay, close } = modal(`
+    <h2>練習を記録</h2>
+    ${item ? `<div class="modal-song">🎵 ${esc(item.title)}${item.artist ? ' / ' + esc(item.artist) : ''}</div>`
+      : `<label class="ml">曲（任意）<select id="p-song">${libraryOptions(items)}</select></label>`}
+    <div class="modal-row">
+      <label class="ml">日付<input type="date" id="p-date" value="${today}"></label>
+      <label class="ml">練習時間（分）<input type="number" id="p-min" min="0" max="1440" value="30"></label>
+    </div>
+    <label class="ml">できばえ<div id="p-stars"></div></label>
+    <label class="ml">メモ<textarea id="p-memo" rows="3" placeholder="今日やったこと・課題など"></textarea></label>
+    <div class="modal-actions">
+      <button class="btn" id="p-cancel">キャンセル</button>
+      <button class="btn primary" id="p-save">記録する</button>
+    </div>
+  `);
+  const stars = starWidget(0);
+  overlay.querySelector('#p-stars').appendChild(stars);
+  overlay.querySelector('#p-cancel').onclick = close;
+  overlay.querySelector('#p-save').onclick = async () => {
+    let chosen = item;
+    if (!item) {
+      const v = overlay.querySelector('#p-song').value;
+      if (v) { const [kind, id] = v.split(':'); const found = items.find((x) => x.kind === kind && x.id === id); chosen = found || null; }
+    }
+    const data = {
+      date: overlay.querySelector('#p-date').value,
+      minutes: overlay.querySelector('#p-min').value,
+      rating: stars.dataset.val,
+      memo: overlay.querySelector('#p-memo').value,
+      itemKind: chosen ? chosen.kind : '',
+      itemId: chosen ? chosen.id : '',
+      itemTitle: chosen ? chosen.title : '',
+    };
+    try {
+      await api.createPractice(data);
+      close(); toast('練習を記録しました');
+      if ((location.hash.slice(1) || '/').startsWith('/practice')) render();
+    } catch (e) { toast(`記録失敗: ${e.message}`, 'err'); }
+  };
+}
+
+// ---------------- 練習記録ページ ----------------
+route('/practice', async () => {
+  const logs = await api.listPractice();
+  const totalMin = logs.reduce((a, l) => a + (l.minutes || 0), 0);
+  const now = new Date();
+  const weekAgo = new Date(now.getTime() - 6 * 864e5).toISOString().slice(0, 10);
+  const weekMin = logs.filter((l) => l.date >= weekAgo).reduce((a, l) => a + (l.minutes || 0), 0);
+  const days = new Set(logs.map((l) => l.date)).size;
+
+  const view = el(`
+    <div>
+      <div class="page-head">
+        <div><h1>📝 練習記録</h1><div class="sub">日々の練習を記録して振り返り</div></div>
+        <div class="head-actions"><button class="btn primary" id="add">＋ 記録する</button></div>
+      </div>
+      <div class="stat-row">
+        <div class="stat"><div class="stat-num">${Math.floor(weekMin / 60)}時間${weekMin % 60}分</div><div class="stat-label">直近7日</div></div>
+        <div class="stat"><div class="stat-num">${Math.floor(totalMin / 60)}時間${totalMin % 60}分</div><div class="stat-label">累計</div></div>
+        <div class="stat"><div class="stat-num">${days}日</div><div class="stat-label">練習した日数</div></div>
+        <div class="stat"><div class="stat-num">${logs.length}回</div><div class="stat-label">記録数</div></div>
+      </div>
+      <div id="loglist"></div>
+    </div>
+  `);
+  const list = view.querySelector('#loglist');
+  if (logs.length === 0) {
+    list.appendChild(el('<div class="empty">まだ練習記録がありません。<br>「＋ 記録する」か、各楽譜ページの「練習を記録」から追加できます。</div>'));
+  } else {
+    for (const l of logs) list.appendChild(practiceRow(l));
+  }
+  view.querySelector('#add').onclick = () => openPracticeDialog(null);
+  app.replaceChildren(view);
+});
+
+function practiceRow(l) {
+  const stars = '★'.repeat(l.rating || 0) + '☆'.repeat(5 - (l.rating || 0));
+  const link = l.itemId ? `#/${l.itemKind === 'document' ? 'documents' : 'scores'}/${l.itemId}` : '';
+  const row = el(`
+    <div class="log-row">
+      <div class="log-date">${esc(l.date)}</div>
+      <div class="log-main">
+        <div class="log-title">${l.itemTitle ? (link ? `<a href="${link}">${esc(l.itemTitle)}</a>` : esc(l.itemTitle)) : '<span class="muted">（曲の指定なし）</span>'}</div>
+        ${l.memo ? `<div class="log-memo">${esc(l.memo).replace(/\n/g, '<br>')}</div>` : ''}
+      </div>
+      <div class="log-side">
+        <div class="log-min">${l.minutes}分</div>
+        ${l.rating ? `<div class="log-stars">${stars}</div>` : ''}
+        <button class="icon-btn" title="削除" data-del="${l.id}">✕</button>
+      </div>
+    </div>
+  `);
+  row.querySelector('[data-del]').onclick = async () => {
+    if (!confirm('この記録を削除しますか？')) return;
+    await api.deletePractice(l.id); toast('削除しました'); render();
+  };
+  return row;
+}
+
+// ---------------- セットリスト一覧 ----------------
+route('/setlists', async () => {
+  const lists = await api.listSetlists();
+  const view = el(`
+    <div>
+      <div class="page-head">
+        <div><h1>🎼 セットリスト</h1><div class="sub">弾きたい曲・ライブや練習の曲順をまとめる</div></div>
+        <div class="head-actions"><button class="btn primary" id="new">＋ 新規</button></div>
+      </div>
+      <div class="grid" id="grid"></div>
+    </div>
+  `);
+  const grid = view.querySelector('#grid');
+  if (lists.length === 0) {
+    grid.appendChild(el('<div class="empty">まだセットリストがありません。<br>「＋ 新規」で作成しましょう。</div>'));
+  } else {
+    for (const sl of lists) {
+      grid.appendChild(el(`
+        <a class="card setlist-card" href="#/setlists/${sl.id}">
+          <div class="thumb thumb-set">🎼 ${sl.items.length}曲</div>
+          <div class="card-body">
+            <div class="card-top"><span class="badge set">セットリスト</span><span class="card-date">${fmtDate(sl.updatedAt)}</span></div>
+            <div class="card-title">${esc(sl.name)}</div>
+            <div class="card-artist">${sl.items.slice(0, 3).map((i) => esc(i.title)).join(' / ')}${sl.items.length > 3 ? ' …' : ''}</div>
+          </div>
+        </a>
+      `));
+    }
+  }
+  view.querySelector('#new').onclick = async () => {
+    const name = prompt('セットリスト名を入力してください', '新しいセットリスト');
+    if (name === null) return;
+    const created = await api.createSetlist({ name: name.trim() || '無題のセットリスト', items: [] });
+    navigate(`/setlists/${created.id}`);
+  };
+  app.replaceChildren(view);
+});
+
+// ---------------- セットリスト詳細 ----------------
+route('/setlists/:id', async ({ id }) => {
+  const sl = await api.getSetlist(id);
+  const libItems = await loadLibraryItems();
+  const view = el(`
+    <div>
+      <div class="page-head">
+        <div><a class="back" href="#/setlists">← セットリスト</a>
+          <h1 class="editable" id="name" title="クリックで名前を編集">${esc(sl.name)}</h1>
+          <div class="sub">${sl.items.length}曲</div></div>
+        <div class="head-actions">
+          <button class="btn" id="print">🖨 印刷</button>
+          <button class="btn danger" id="del">削除</button>
+        </div>
+      </div>
+      <div class="set-add">
+        <select id="add-song" class="ctrl-select">${libraryOptions(libItems)}</select>
+        <button class="btn" id="add-btn">＋ 追加</button>
+      </div>
+      <ol class="set-items" id="items"></ol>
+    </div>
+  `);
+  const itemsEl = view.querySelector('#items');
+
+  const save = async () => { await api.updateSetlist(id, { items: sl.items }); };
+  const paint = () => {
+    itemsEl.replaceChildren();
+    if (sl.items.length === 0) { itemsEl.appendChild(el('<div class="empty">曲がありません。上のメニューから追加してください。</div>')); return; }
+    sl.items.forEach((it, idx) => {
+      const href = `#/${it.kind === 'document' ? 'documents' : 'scores'}/${it.id}`;
+      const li = el(`
+        <li class="set-item">
+          <span class="set-no">${idx + 1}</span>
+          <a class="set-title" href="${href}">${esc(it.title)}${it.artist ? `<span class="set-artist"> / ${esc(it.artist)}</span>` : ''}</a>
+          <span class="set-ctrls">
+            <button class="icon-btn" data-up title="上へ" ${idx === 0 ? 'disabled' : ''}>▲</button>
+            <button class="icon-btn" data-down title="下へ" ${idx === sl.items.length - 1 ? 'disabled' : ''}>▼</button>
+            <button class="icon-btn" data-rm title="外す">✕</button>
+          </span>
+        </li>
+      `);
+      li.querySelector('[data-up]').onclick = async () => { [sl.items[idx - 1], sl.items[idx]] = [sl.items[idx], sl.items[idx - 1]]; paint(); await save(); };
+      li.querySelector('[data-down]').onclick = async () => { [sl.items[idx + 1], sl.items[idx]] = [sl.items[idx], sl.items[idx + 1]]; paint(); await save(); };
+      li.querySelector('[data-rm]').onclick = async () => { sl.items.splice(idx, 1); paint(); await save(); };
+      itemsEl.appendChild(li);
+    });
+  };
+  paint();
+
+  view.querySelector('#add-btn').onclick = async () => {
+    const v = view.querySelector('#add-song').value;
+    if (!v) return;
+    const [kind, iid] = v.split(':');
+    const found = libItems.find((x) => x.kind === kind && x.id === iid);
+    if (found) { sl.items.push({ kind: found.kind, id: found.id, title: found.title, artist: found.artist }); paint(); await save(); toast('追加しました'); }
+  };
+  view.querySelector('#name').onclick = async () => {
+    const name = prompt('セットリスト名', sl.name);
+    if (name === null) return;
+    sl.name = name.trim() || sl.name;
+    view.querySelector('#name').textContent = sl.name;
+    await api.updateSetlist(id, { name: sl.name });
+  };
+  view.querySelector('#print').onclick = () => window.print();
+  view.querySelector('#del').onclick = async () => {
+    if (!confirm('このセットリストを削除しますか？')) return;
+    await api.deleteSetlist(id); toast('削除しました'); navigate('/setlists');
+  };
   app.replaceChildren(view);
 });
 

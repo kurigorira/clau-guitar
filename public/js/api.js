@@ -35,4 +35,17 @@ export const api = {
   updateDocument: (id, data) => jsonFetch(`/api/documents/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteDocument: (id) => jsonFetch(`/api/documents/${id}`, { method: 'DELETE' }),
   documentFileUrl: (id) => `/api/documents/${id}/file`,
+
+  // 練習記録
+  listPractice: () => jsonFetch('/api/practice'),
+  createPractice: (data) => jsonFetch('/api/practice', { method: 'POST', body: JSON.stringify(data) }),
+  updatePractice: (id, data) => jsonFetch(`/api/practice/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deletePractice: (id) => jsonFetch(`/api/practice/${id}`, { method: 'DELETE' }),
+
+  // セットリスト
+  listSetlists: () => jsonFetch('/api/setlists'),
+  getSetlist: (id) => jsonFetch(`/api/setlists/${id}`),
+  createSetlist: (data) => jsonFetch('/api/setlists', { method: 'POST', body: JSON.stringify(data) }),
+  updateSetlist: (id, data) => jsonFetch(`/api/setlists/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteSetlist: (id) => jsonFetch(`/api/setlists/${id}`, { method: 'DELETE' }),
 };

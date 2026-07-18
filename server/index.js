@@ -168,11 +168,110 @@ app.get('/api/documents/:id/file', async (req, res) => {
   res.sendFile(filePath, (err) => { if (err && !res.headersSent) res.status(404).end(); });
 });
 
+// ============ 練習記録 ============
+const clampInt = (v, min, max, def) => {
+  const n = parseInt(v, 10);
+  if (!Number.isFinite(n)) return def;
+  return Math.max(min, Math.min(max, n));
+};
+
+app.get('/api/practice', async (_req, res) => {
+  const items = (await list('practice')).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || ''));
+  res.json(items);
+});
+
+app.post('/api/practice', async (req, res) => {
+  const b = req.body || {};
+  const record = {
+    id: newId(),
+    kind: 'practice',
+    date: /^\d{4}-\d{2}-\d{2}$/.test(b.date) ? b.date : new Date().toISOString().slice(0, 10),
+    minutes: clampInt(b.minutes, 0, 1440, 0),
+    rating: clampInt(b.rating, 0, 5, 0),
+    itemKind: ['score', 'document'].includes(b.itemKind) ? b.itemKind : '',
+    itemId: (b.itemId || '').toString().slice(0, 80),
+    itemTitle: (b.itemTitle || '').toString().slice(0, 200),
+    memo: (b.memo || '').toString().slice(0, 4000),
+    createdAt: now(),
+  };
+  await put('practice', record);
+  res.status(201).json(record);
+});
+
+app.put('/api/practice/:id', async (req, res) => {
+  const existing = await get('practice', req.params.id);
+  if (!existing) return res.status(404).json({ error: 'not found' });
+  const b = req.body || {};
+  const updated = { ...existing };
+  if (/^\d{4}-\d{2}-\d{2}$/.test(b.date)) updated.date = b.date;
+  if (b.minutes !== undefined) updated.minutes = clampInt(b.minutes, 0, 1440, existing.minutes);
+  if (b.rating !== undefined) updated.rating = clampInt(b.rating, 0, 5, existing.rating);
+  if (b.memo !== undefined) updated.memo = b.memo.toString().slice(0, 4000);
+  await put('practice', updated);
+  res.json(updated);
+});
+
+app.delete('/api/practice/:id', async (req, res) => {
+  res.json({ ok: await remove('practice', req.params.id) });
+});
+
+// ============ セットリスト ============
+const cleanItems = (arr) => (Array.isArray(arr) ? arr : []).slice(0, 200).map((it) => ({
+  kind: ['score', 'document'].includes(it.kind) ? it.kind : 'score',
+  id: (it.id || '').toString().slice(0, 80),
+  title: (it.title || '無題').toString().slice(0, 200),
+  artist: (it.artist || '').toString().slice(0, 200),
+})).filter((it) => it.id);
+
+app.get('/api/setlists', async (_req, res) => {
+  const items = (await list('setlists')).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+  res.json(items);
+});
+
+app.get('/api/setlists/:id', async (req, res) => {
+  const item = await get('setlists', req.params.id);
+  if (!item) return res.status(404).json({ error: 'not found' });
+  res.json(item);
+});
+
+app.post('/api/setlists', async (req, res) => {
+  const b = req.body || {};
+  const record = {
+    id: newId(),
+    kind: 'setlist',
+    name: (b.name || '無題のセットリスト').toString().slice(0, 200),
+    notes: (b.notes || '').toString().slice(0, 4000),
+    items: cleanItems(b.items),
+    createdAt: now(),
+    updatedAt: now(),
+  };
+  await put('setlists', record);
+  res.status(201).json(record);
+});
+
+app.put('/api/setlists/:id', async (req, res) => {
+  const existing = await get('setlists', req.params.id);
+  if (!existing) return res.status(404).json({ error: 'not found' });
+  const b = req.body || {};
+  const updated = { ...existing, updatedAt: now() };
+  if (b.name !== undefined) updated.name = b.name.toString().slice(0, 200);
+  if (b.notes !== undefined) updated.notes = b.notes.toString().slice(0, 4000);
+  if (b.items !== undefined) updated.items = cleanItems(b.items);
+  await put('setlists', updated);
+  res.json(updated);
+});
+
+app.delete('/api/setlists/:id', async (req, res) => {
+  res.json({ ok: await remove('setlists', req.params.id) });
+});
+
 // ============ バックアップ用エクスポート（メタデータをまとめてJSONで）============
 app.get('/api/export', async (_req, res) => {
-  const [scores, documents] = await Promise.all([list('scores'), list('documents')]);
+  const [scores, documents, practice, setlists] = await Promise.all([
+    list('scores'), list('documents'), list('practice'), list('setlists'),
+  ]);
   res.setHeader('Content-Disposition', `attachment; filename="clau-guitar-backup-${Date.now()}.json"`);
-  res.json({ exportedAt: now(), scores, documents });
+  res.json({ exportedAt: now(), scores, documents, practice, setlists });
 });
 
 // ============ 静的ファイル（PWAフロント）============

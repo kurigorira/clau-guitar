@@ -16,6 +16,8 @@ export async function ensureDirs() {
   await fs.mkdir(UPLOAD_DIR, { recursive: true });
   await fs.mkdir(dirFor('scores'), { recursive: true });
   await fs.mkdir(dirFor('documents'), { recursive: true });
+  await fs.mkdir(dirFor('practice'), { recursive: true });
+  await fs.mkdir(dirFor('setlists'), { recursive: true });
 }
 
 export function newId() {
