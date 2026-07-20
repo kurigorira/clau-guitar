@@ -1,9 +1,10 @@
-// アプリ本体（シェル）をキャッシュしてオフラインでも開けるようにする。
-// 楽譜データやアップロードファイル(/api/)はキャッシュせず常に最新を取得する。
-const CACHE = 'clau-guitar-v1';
+// オフラインでも開けるようにキャッシュするが、オンライン時は常に最新を優先する
+// （ネットワーク優先）。これによりアプリを更新したら必ず反映される。
+// 楽譜データやアップロードファイル(/api/)も常にネットワーク優先。
+const CACHE = 'clau-guitar-v2';
 const SHELL = [
   '/', '/index.html', '/css/style.css',
-  '/js/app.js', '/js/api.js', '/js/chordpro.js', '/js/chords.js',
+  '/js/app.js', '/js/api.js', '/js/chordpro.js', '/js/chords.js', '/js/transpose.js',
   '/manifest.webmanifest', '/icon.svg',
 ];
 
@@ -21,17 +22,18 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET') return;
-  // APIは常にネットワーク優先（データの鮮度を保つ）
-  if (url.pathname.startsWith('/api/')) {
-    e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
-    return;
-  }
-  // 静的アセットはキャッシュ優先
+
+  // ネットワーク優先：まず最新を取りに行き、失敗（オフライン）したらキャッシュへ。
   e.respondWith(
-    caches.match(e.request).then((hit) => hit || fetch(e.request).then((res) => {
-      const copy = res.clone();
-      caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
-      return res;
-    }).catch(() => caches.match('/')))
+    fetch(e.request)
+      .then((res) => {
+        // 同一オリジンかつAPI以外の成功レスポンスはオフライン用に控えておく
+        if (url.origin === location.origin && !url.pathname.startsWith('/api/') && res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
+        }
+        return res;
+      })
+      .catch(() => caches.match(e.request).then((hit) => hit || caches.match('/')))
   );
 });
