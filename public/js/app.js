@@ -24,7 +24,10 @@ async function render() {
   const path = location.hash.slice(1) || '/';
   const [pathname, query] = path.split('?');
   const params = new URLSearchParams(query || '');
-  for (const r of routes) {
+  // 静的なルート(:を含まない)を、パラメータ付きルートより優先する。
+  // これがないと /scores/new が /scores/:id に先に一致してしまう。
+  const ordered = [...routes].sort((a, b) => (a.pattern.includes(':') ? 1 : 0) - (b.pattern.includes(':') ? 1 : 0));
+  for (const r of ordered) {
     const keys = [];
     const rx = new RegExp('^' + r.pattern.replace(/:[^/]+/g, (m) => { keys.push(m.slice(1)); return '([^/]+)'; }) + '$');
     const m = pathname.match(rx);
